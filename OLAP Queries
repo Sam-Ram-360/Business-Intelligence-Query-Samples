@@ -1,0 +1,115 @@
+--1. Comparison of the amount of merchandise sold online each year with the previous year 
+select a.DateYear, a.MerchandiseType,a.SoldAmount_PerYear
+       ,lag(a.SoldAmount_PerYear,1,a.SoldAmount_PerYear) over (partition by a.MerchandiseType  order by a.MerchandiseType) as SoldAmount_PreviousYear
+       ,SoldAmount_PerYear - lag(a.SoldAmount_PerYear,1,a.SoldAmount_PerYear) over (partition by a.MerchandiseType  order by a.MerchandiseType) as Difference
+       ,iif(SoldAmount_PerYear - lag(a.SoldAmount_PerYear,1,a.SoldAmount_PerYear) over (partition by a.MerchandiseType  order by a.MerchandiseType)
+             >=0,'growth','decline') as growth_decline
+from (SELECT d.DateYear
+             ,m.MerchandiseType
+             ,sum(osf.MerchandiseSoldPND) SoldAmount_PerYear
+    FROM [TiorGames].[dbo].[OnlineSalesFact] osf
+    join [dbo].[DateDim] d  on osf.DateID = d.DateID
+    join MerchandiseDim m   on osf.MerchandiseID = m.MerchandiseID
+    group by m.MerchandiseType,d.DateYear
+    ) a
+    order by a.MerchandiseType
+
+//**************************************************************************************************************************************************************
+
+--2. the best Providers of each Year in msi or worlds events in terms of Merchandise Sold
+Select a.ProviderName,a.DateYear,a.EventName,a.MerchandiseSold,a.MerchandiseSoldPND,a.BestSoldPND
+
+from (SELECT p.ProviderName,d.DateYear,e.EventName
+      ,sum([MerchandiseSold]) MerchandiseSold
+      ,sum([MerchandiseSoldPND]) MerchandiseSoldPND
+      ,max(sum(MerchandiseSoldPND)) over (partition by DateYear,EventName) as BestSoldPND
+  FROM [TiorGames].[dbo].[EventFact] ef
+  join DateDim d         on d.DateID = ef.DateID
+  join EventDim e        on e.EventID = ef.EventID
+  join MerchandiseDim m  on ef.MerchandiseID = m.MerchandiseID
+  join ProviderDim p     on p.ProviderID = m.MerchandiseProviderID
+     group by e.EventName ,d.DateYear,p.ProviderName ) a
+   
+ where a.BestSoldPND = a.MerchandiseSoldPND
+ order by a.DateYear,a.EventName          
+ 
+//**************************************************************************************************************************************************************
+
+--3. the most active players & their countries and age
+select c.PlayerRealName,c.played_no,c.rank,c.Country
+       ,DATEDIFF(yy,c.PlayerDoB,GETDATE()) Player_Age
+from (select distinct b.PlayerID,b.played_no,b.rank ,p.PlayerRealName,l.Country,p.PlayerDoB
+from(select a.* ,DENSE_RANK() over (order by played_no DESC ) rank
+from (SELECT pig.PlayerID
+      ,[EventID]
+      ,[StadiumID]
+      ,[RefereeID]
+      ,gf.[GameID]
+      ,[TimeID]
+      ,[DateID]
+      ,count(1) over (partition by PlayerID) played_no
+  FROM [TiorGames].[dbo].[GameFact] gf
+  join PlayerInGameDim pig on gf.GameID = pig.GameID) a ) b
+  join PlayerDim p         on p.PlayerID = b.PlayerID
+  join LocationDim l       on l.LocationID = p.PlayerOriginID
+   where rank <=3 )c
+   order by rank
+
+
+//**************************************************************************************************************************************************************
+--4. participants countries's rank
+select distinct a.Country,a.no_participant
+       ,DENSE_RANK() over (order by a.no_participant desc) Country_Rank
+from (SELECT l.Country
+      ,pig.PlayerID
+      ,[EventID]
+      ,[StadiumID]
+      ,[RefereeID]
+      ,gf.[GameID]
+      ,[TimeID]
+      ,[DateID]
+      ,count(1) over (partition by l.Country) no_participant
+  FROM [TiorGames].[dbo].[GameFact] gf
+  join PlayerInGameDim pig on gf.GameID = pig.GameID
+  join PlayerDim p         on p.PlayerID = pig.PlayerID
+  join LocationDim l       on l.LocationID = p.PlayerOriginID )a
+   order by Country_Rank asc
+
+
+
+//**************************************************************************************************************************************************************
+
+-- 5.Ticket refund in total , each year and each month
+SELECT d.DateYear,d.DateMonth
+      ,concat(td.TicketEvent,'_',td.TicketType) Ticket
+      ,sum(TicketsRefunded) TicketsRefunded
+      ,sum(TicketsRefundedPND) TicketsRefundedPND
+  FROM [TiorGames].[dbo].[RefundFact] rf
+  join DateDim d        on d.DateID = rf.DateID
+  join TicketDim td     on td.TicketID = rf.TicketID
+    group by ROLLUP (d.DateYear,d.DateMonth, concat(td.TicketEvent,'_',td.TicketType))
+    order by d.DateYear,d.DateMonth ,TicketsRefundedPND Desc
+
+
+//**************************************************************************************************************************************************************
+-- 6. the percentage of contribution of marketeers in making net profit in every year and month and event
+select a.year_month,a.EventName,a.MarketeerName
+       ,a.PromotionNetProfit
+       ,sum(a.PromotionNetProfit)  over (partition by a.year_month)  as NetProfitYearMonth 
+       ,format(Round((cast(a.PromotionNetProfit as float)
+       /
+              cast(sum(a.PromotionNetProfit)  over (partition by a.year_month,a.EventName)  as float)),2),'P2') ParticipationPercentage
+      
+    
+from (SELECT CONCAT(DateYear,'_',FORMAT(d.DateValue,'MMMM')) year_month
+      ,m.MarketeerName,e.EventName
+      ,sum([PromotionRevenue]) - sum([PromotionCost]) PromotionNetProfit
+      
+  FROM [TiorGames].[dbo].[EventFact] ef
+   join PromotionDim p on p.promotionID = ef.PromotionID 
+   and                   p.PromotionEventID = ef.EventID
+   join MarketeerDim m on p.MarketeerID = m.MarketeerID
+   join DateDim d      on d.DateID = ef.DateID
+   join EventDim e     on e.EventID = ef.EventID
+   group by CONCAT(DateYear,'_',FORMAT(d.DateValue,'MMMM')) ,m.MarketeerName,e.EventName ) a 
+
