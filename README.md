@@ -1,0 +1,1 @@
+# Business-Intelligence-Query-Samples
